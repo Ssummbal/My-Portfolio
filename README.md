@@ -18,4 +18,4 @@ Not "can AI do this." "Should AI do this, and who's accountable if it's wrong."
 
 If you're hiring for AIPM or associate PM work and want to see how I think through a problem before I touch a solution, start with either case study above. Happy to walk through the reasoning behind any of it.
 
-[LinkedIn](your-linkedin-url) · [Email](your-email)
+[LinkedIn](www.linkedin.com/in/sumbal-shiraz-b34060220) · [Email](Sumbalsheraaz@gmail.com)
