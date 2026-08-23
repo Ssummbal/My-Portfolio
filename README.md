@@ -12,6 +12,9 @@ What happens when a phone number gets reused and the old account never gets flag
 **[Where the Chatbot Has to Stop](./identity-conflict-chatbot)**
 An AI intake flow for identity conflicts. The hard part wasn't teaching it what to do, it was teaching it when to step back. Includes the decision logic and the one rule that stayed constant.
 
+**[Where the Editing Workflow Draws the Line](https://github.com/Ssummbal/My-Portfolio/tree/main/content-quality-workflow)**
+An AI-assisted content workflow that speeds up research, outlining, and repurposing, but keeps final judgment on accuracy and voice fully human. Same rule as the identity work, applied to editorial review.
+
 ## What I'm actually testing for in each of these
 
 Not "can AI do this." "Should AI do this, and who's accountable if it's wrong."
