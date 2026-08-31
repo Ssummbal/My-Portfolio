@@ -1,0 +1,157 @@
+# The Two Records Problem
+### A PRD for Conflict Detection and Escalation in a RAG-Powered Support Bot
+
+**Author:** Sumbal Shiraz
+**Status:** Draft v1.0
+**Type:** Case study PRD (portfolio project)
+
+---
+
+## 1. Summary
+
+A RAG-powered support bot retrieves account history to answer customer questions. Retrieval occasionally returns two records for the same account that disagree with each other (different name on file, different balance, different status) because of migrations, merges, or delayed syncs between source systems.
+
+Left unhandled, the model treats both records as equally valid context and generates a fluent, confident answer built on top of a contradiction the user never sees. This PRD defines how the product detects that contradiction, how it decides whether to answer, hold, or escalate, and what happens when a human has to take over.
+
+This follows the same throughline as my other case studies: AI handles the mechanical work of retrieval and generation, human judgment governs the decisions that carry real consequences for the customer.
+
+---
+
+## 2. Problem Statement
+
+Retrieval-augmented generation is built on an assumption that doesn't always hold: that the retrieved context is internally consistent. When it isn't, the model has no native way to know that. It scores relevance, not truth, and it will synthesize an answer from whatever chunks rank highest, even if two of those chunks contradict each other.
+
+For a support bot handling account history, that failure mode is not cosmetic. A wrong balance, a wrong name, or a wrong status stated with full confidence erodes trust faster than the bot simply saying "I don't know."
+
+**The core question this PRD answers:** when retrieval returns conflicting records, what does the product do before generation ever reaches the customer?
+
+---
+
+## 3. Goals
+
+- Detect when retrieved records meaningfully conflict, before the response is generated.
+- Prevent the model from silently resolving the conflict on the customer's behalf.
+- Give the customer a response that is honest about the uncertainty without feeling broken.
+- Hand off to a human agent with enough structured context that they don't start from zero.
+- Distinguish between rare, one-off conflicts and conflicts that signal a deeper data quality problem.
+
+## 4. Non-Goals
+
+- This PRD does not attempt to fix the underlying data quality or sync issues between source systems. That is a separate, longer-term data engineering problem.
+- This PRD does not cover conflicts that are ambiguous but not contradictory (e.g. two similar but not mutually exclusive records). That is a related but separate classification problem.
+- This is not a model fine-tuning proposal. The fix here lives in the product and orchestration layer, not in retraining the underlying LLM.
+
+---
+
+## 5. Background: Why This Happens
+
+Conflicting records typically originate from one of a few patterns:
+
+| Source | Example |
+|---|---|
+| Account migration | Legacy system record and new-system record both indexed, neither fully deprecated |
+| Account merge | Two previously separate accounts merged, but historical documents from both remain retrievable |
+| Delayed sync | Source-of-truth system updated, but the vector index hasn't re-embedded the change yet |
+| Human data entry error | Two records genuinely disagree because someone made a mistake upstream |
+
+Retrieval doesn't distinguish between these causes. It only returns what's semantically close to the query. Whether that closeness reflects the truth is a separate question the product has to answer.
+
+---
+
+## 6. User Stories
+
+- **As a customer**, when I ask about my account and the system isn't sure which record is accurate, I want to be told honestly rather than given a confident answer that might be wrong.
+- **As a support agent**, when a conflict escalates to me, I want to see both records and why the system flagged them, not just a vague "needs review" ticket.
+- **As a product/data team**, I want visibility into how often conflicts occur and where they cluster, so a spike tells us something is wrong upstream, not just that one customer got unlucky.
+
+---
+
+## 7. Conflict Detection Logic
+
+Not every pair of retrieved documents is a conflict. Detection needs to run on a narrower signal than "multiple documents returned."
+
+**A conflict is flagged when two or more retrieved records:**
+1. Reference the same account identifier, **and**
+2. Disagree on a field the response depends on to answer the query (name, balance, status, plan tier, etc.), **and**
+3. Cannot be resolved by recency alone with high confidence (see confidence scoring below).
+
+**Explicitly not a conflict:**
+- Two records that reference different but related accounts (e.g. primary and linked sub-account).
+- Two records where one is clearly and unambiguously superseded (a hard status field with a verified timestamp, not just semantic similarity).
+
+---
+
+## 8. Confidence Scoring
+
+Two distinct scores are needed here, and conflating them is the most common mistake in RAG products:
+
+**Retrieval consistency score** — does the retrieved context agree with itself? This is checked *before* generation. Low consistency means the records disagree on a field the answer depends on.
+
+**Generation confidence score** — how confident is the model in the answer it produced? This is a property of the output, not the input, and it says nothing about whether the underlying context was trustworthy in the first place.
+
+A model can be highly confident in an answer built on contradictory context. That's the exact failure mode this PRD exists to prevent. **Retrieval consistency is checked first, and a low score short-circuits generation before it starts,** rather than relying on the model to flag its own uncertainty after the fact.
+
+| Consistency score | System behavior |
+|---|---|
+| High (records agree, or one is clearly authoritative) | Answer normally |
+| Medium (minor discrepancy, non-critical field) | Answer, with a soft caveat surfaced in the response |
+| Low (critical field conflict, no clear authority) | Hold generation, route to escalation flow |
+
+---
+
+## 9. What the Customer Sees
+
+When a conflict is flagged, the bot does not generate a synthesized answer from the conflicting records. It also does not dead-end the conversation.
+
+**Example response:**
+
+> "I'm seeing two different records on file for this account, and I want to make sure I give you the right information rather than guess. Let me connect you with someone who can confirm this directly."
+
+This response is scripted, not generated from the conflicting context, so there's no risk of the model leaking a hallucinated synthesis while explaining the uncertainty.
+
+---
+
+## 10. Escalation Flow
+
+When a conflict triggers a hold, the handoff to a human agent includes:
+
+- Both conflicting records, side by side, with source system and last-updated timestamp for each.
+- The specific field(s) in conflict, highlighted, not the full record dump.
+- The customer's original question and the conversation so far.
+- The consistency score and why it was flagged (which detection rule fired).
+
+The agent should be able to resolve the conflict, or confirm the correct record, without re-asking the customer to repeat information they already gave the bot.
+
+---
+
+## 11. Edge Cases
+
+- **What if the customer disputes both records?** Escalate to a tier that can access source-of-truth systems directly, not just the two retrieved documents.
+- **What if the conflict resolves mid-conversation** (agent confirms record A is correct)? The bot's context for the rest of the session should update, not keep surfacing the caveat.
+- **What if this account has a history of conflicts?** Flag the account for a data quality review independent of this specific conversation, since a pattern at the account level suggests a sync issue, not a one-off.
+- **What if the conflict is in a non-critical field** (e.g. mailing address, not balance)? Medium-confidence path applies. Don't escalate low-stakes discrepancies with the same weight as balance or identity conflicts.
+
+---
+
+## 12. Success Metrics
+
+- **False escalation rate** — how often the system escalates when the records didn't actually meaningfully conflict. Too high, and the bot becomes unhelpful.
+- **Missed conflict rate** — how often a contradictory answer reaches the customer undetected. This is the metric that matters most, and the one hardest to catch without deliberate auditing.
+- **Escalation resolution time** — whether the structured handoff actually saves agent time versus a generic "flagged for review" ticket.
+- **Conflict rate by account cluster** — used to detect upstream data issues, not to evaluate the bot itself.
+
+---
+
+## 13. Open Questions
+
+- Where does the consistency check run: at retrieval time (before ranking) or after retrieval, on the top-k results? This affects latency and cost.
+- Should the medium-confidence caveat be visible by default, or only surfaced if the customer pushes back on an answer?
+- What's the right threshold for "history of conflicts" at the account level before triggering a proactive data quality flag, versus waiting for the next live conflict?
+
+---
+
+## 14. Why This Matters
+
+The retrieval works. The generation works. What breaks the product is the space in between, where two true-looking pieces of context disagree and something has to decide what happens next. That decision can't live inside the model. It has to be designed, deliberately, at the product layer, with a clear answer for what the customer sees, what the agent receives, and what counts as a pattern worth investigating.
+
+That's the same principle behind every PRD in this portfolio: AI handles the mechanical work. A human, and the product built around them, governs the decision.
