@@ -1,0 +1,173 @@
+# PRD: Brief Before You Write
+
+**Product Type:** AI-powered content research assistant (RAG)
+**Author:** Sumbal Shiraz
+**Status:** Draft v1.0
+**Category:** AI Product Management — Personal Case Study
+
+---
+
+## 1. Summary
+
+Brief Before You Write is a retrieval-augmented generation (RAG) tool that helps freelance content writers and SEO specialists turn top-ranking competitor articles into a grounded, structured content brief, automatically, and with source citations for every claim.
+
+Instead of manually reading 5-10 ranking articles and reverse-engineering what to cover, the writer provides a set of source articles (URLs or pasted text) and the system retrieves and synthesizes what those specific articles actually say: shared subtopics, structural patterns, and gaps. The tool never invents generic SEO advice that isn't grounded in the provided sources.
+
+---
+
+## 2. Problem Statement
+
+Before writing an SEO-optimized article, writers are expected to research the top-ranking pages for their target keyword to understand what already exists, what's expected by search intent, and what's missing. This step directly affects content quality and ranking potential.
+
+In practice, this research step is inconsistent:
+
+- It's time-consuming, so freelancers under deadline pressure often skip or shortcut it.
+- It's manual and unstructured, done by opening multiple tabs and taking loose notes.
+- The output (a "content brief") varies wildly in quality depending on how thorough that manual pass was.
+- Junior writers in particular struggle to synthesize patterns across multiple sources quickly.
+
+The result: inconsistent content briefs, missed subtopics, and articles that don't fully match search intent, directly impacting ranking performance and client satisfaction.
+
+---
+
+## 3. Goals
+
+### 3.1 Product Goals
+- Reduce the time it takes to go from "target keyword" to "actionable content brief."
+- Ensure every recommendation in the generated brief is traceable to a real source article, not fabricated.
+- Surface content gaps (what competitors are missing) as a value-add beyond simple summarization.
+
+### 3.2 Non-Goals
+- This tool does not write the final article. It produces a brief, not finished copy.
+- This tool does not do live web crawling/ranking lookups in v1. The user supplies the source articles directly (URLs or pasted text).
+- This tool does not evaluate technical SEO factors (page speed, backlinks, schema markup). It is scoped to content structure and topical coverage only.
+
+---
+
+## 4. Target Users
+
+**Primary user:** Freelance SEO content writers and content strategists (the persona this was built for, based on direct freelance experience).
+
+**Secondary user:** Content agencies or in-house marketing teams producing briefs at scale for multiple writers.
+
+### User Story
+> As a freelance SEO writer, I want to quickly understand what top-ranking articles for my target keyword already cover and what they're missing, so I can write a brief that actually improves my article's chances of ranking, without spending hours manually cross-referencing competitor content.
+
+---
+
+## 5. Success Metrics
+
+| Metric | Definition | Target |
+|---|---|---|
+| Grounding accuracy | % of claims in the generated brief that are traceable to a specific source article via citation | ≥ 90% |
+| Time-to-brief | Time from submitting source articles to receiving a usable brief | Under 3 minutes for 5 source articles |
+| Gap-detection usefulness | % of flagged "gaps" that a human reviewer agrees are genuinely missing from source articles (manual eval on a test set) | ≥ 80% |
+| Hallucination rate | % of generated statements not supported by any retrieved chunk | < 5% |
+
+These map to the same evaluation lens used across my other case studies: does the system stay grounded in what it actually knows, and does it clearly signal when it doesn't.
+
+---
+
+## 6. Scope
+
+### In Scope (v1)
+- Accepts 3-5 source articles per session, either pasted as raw text or provided as URLs (fetched and stripped to main article text).
+- Chunks and embeds source content into a vector store.
+- Answers ad hoc questions from the user, e.g., "what subtopics do all these cover," "what's missing," "what's the most common structure."
+- Generates a structured content brief on demand: suggested headline, subtopic outline, and a "gap opportunities" section.
+- Every claim in the generated brief includes an inline citation to the specific source article it came from.
+- If a question can't be answered from the retrieved content, the system explicitly says so rather than generating a generic answer.
+
+### Out of Scope (v1)
+- Live search/ranking data (e.g., pulling from Google SERPs automatically).
+- Multi-language support.
+- Direct integration with CMS or publishing tools.
+- Long-term memory across sessions (each brief-building session is independent).
+
+---
+
+## 7. User Flow
+
+1. User pastes in 3-5 URLs or blocks of text for competitor articles targeting the same keyword.
+2. System scrapes/cleans the text (for URLs) and chunks all source content.
+3. Chunks are embedded and stored in a vector database.
+4. User can either:
+   - Ask a free-form question ("what do all these articles agree on?"), or
+   - Click "Generate Brief" for the full structured output.
+5. System retrieves the most relevant chunks for the query, passes them to the LLM with a grounding-only instruction, and returns an answer with inline citations back to source articles.
+6. If retrieval confidence is low (few or no relevant chunks found), the system responds with an explicit "not covered in the provided sources" message instead of guessing.
+
+---
+
+## 8. Functional Requirements
+
+| ID | Requirement |
+|---|---|
+| FR-1 | System must accept both pasted text and URLs as source input. |
+| FR-2 | System must chunk source documents (target: 300-500 tokens per chunk with slight overlap). |
+| FR-3 | System must embed chunks and store them in a vector index, tagged with their source article. |
+| FR-4 | System must support free-form Q&A against the ingested sources. |
+| FR-5 | System must support one-click "Generate Brief" producing: suggested headline options, a subtopic/outline structure, and a gap-analysis section. |
+| FR-6 | Every generated claim must include a citation identifying which source article it came from. |
+| FR-7 | If no retrieved chunk meets a minimum relevance threshold for a query, the system must explicitly state the sources don't cover that question rather than answering from general knowledge. |
+| FR-8 | System must allow the user to remove/replace a source article and regenerate results without restarting the whole session. |
+
+---
+
+## 9. The Core Product Decision: Grounding vs. Fluency
+
+The hardest design decision in this product mirrors the theme across my other case studies: deciding exactly where the system should stop and admit a limit, instead of producing a fluent but ungrounded answer.
+
+A generic LLM asked "what's a good content structure for this keyword" will happily generate a plausible-sounding answer from general training knowledge. That's the opposite of what this tool is for. The value here is entirely in the sources the user provided, so the system must:
+
+- Retrieve before answering, every time, no exceptions.
+- Refuse to answer, clearly and explicitly, when retrieval confidence is low.
+- Cite specifically enough that a user could go verify the claim themselves in seconds.
+
+This is a deliberate trade-off: the tool will sometimes say "I can't determine that from your sources" in cases where a general-purpose LLM would have guessed correctly. That's an intentional cost in exchange for trustworthiness.
+
+---
+
+## 10. Technical Approach (for the demo build)
+
+- **Input handling:** URL fetch + text extraction (e.g., `readability`-style parsing) or direct paste.
+- **Chunking:** Fixed-size token chunking with overlap, tagged with source metadata (article title/URL).
+- **Embedding + storage:** Open-source embedding model, stored in a lightweight vector store (Chroma or FAISS) for a simple local/demo deployment.
+- **Retrieval:** Top-k similarity search per query, with a minimum similarity threshold gating whether the system attempts an answer at all.
+- **Generation:** LLM prompt explicitly constrained to only use retrieved chunks, required to cite source per claim, and instructed to refuse when context is insufficient.
+- **Interface:** Simple demo UI (Streamlit or a minimal web app) — not meant to be production-polished, but functional enough to demo the flow end-to-end.
+
+---
+
+## 11. Risks & Open Questions
+
+| Risk | Mitigation |
+|---|---|
+| Source articles may be paywalled or block scraping | Support manual paste as a fallback input method (already in scope) |
+| Similarity search may retrieve topically related but unhelpful chunks | Tune similarity threshold using a small manual test set before finalizing |
+| Gap-analysis is inherently more subjective than direct Q&A | Frame gap suggestions as "opportunities to consider" rather than definitive claims, and always cite what was present in each source for comparison |
+
+**Open question:** Should the "Generate Brief" output include a confidence indicator per section (e.g., "high confidence — all 5 sources agree" vs. "low confidence — only 1 source mentions this")? Worth testing with real users before deciding.
+
+---
+
+## 12. Repo Structure (for GitHub)
+
+```
+brief-before-you-write/
+├── README.md              # Overview, problem, demo GIF/Loom link
+├── PRD.md                 # This document
+├── decision-rule.md        # Grounding/refusal logic, explained
+├── demo/
+│   ├── ingest.py           # Scraping + chunking + embedding pipeline
+│   ├── query.py            # Retrieval + generation logic
+│   └── app.py              # Simple demo interface
+└── examples/
+    └── sample_brief_output.md
+```
+
+---
+
+## 13. Why This Case Study
+
+This project reflects a problem I've experienced directly in my own freelance SEO work, not a hypothetical. It's also a deliberate choice to demonstrate a RAG use case outside of typical risk/safety framing: grounding, citation, and honest refusal apply just as much to everyday content and research tooling as they do to higher-stakes domains.
